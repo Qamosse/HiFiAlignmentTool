@@ -1,4 +1,7 @@
 # Install using: python3 -m pip install [--user] -r requirements.txt
+# Tested with Python 3.10 (conda) on macOS / Apple Silicon.
+
+# --- shared by the original scripts and HiFi Align
 numpy>=1.22.2
 tifffile>=2022.2.9
 aicspylibczi>=3.0.5
@@ -6,7 +9,15 @@ scikit-image>=0.19.2
 pystackreg>=0.2.5
 pandas>=1.4.1
 
+# --- HiFi Align (new engine + graphical interface)
+scipy>=1.10
+opencv-python-headless>=4.8
+zarr>=2.16,<3          # tifffile's zarr store (multiscale TIFF reading); zarr 3 changed the API
+imagecodecs>=2023.1.23 # tile compression / decompression
+PySide6>=6.8           # graphical interface (6.8+ follows the system light/dark theme)
+
 # The pylibCZIrw library is not (yet) on PyPI and must be installed as a wheel
+# (only needed by the original scripts to write CZI files)
 # Install using: python3 -m pip install [--user] pylibCZIrw-*.whl
 
 # pylibCZIrw>=3.0.0

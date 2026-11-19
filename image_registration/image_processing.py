@@ -11,16 +11,22 @@ import pandas as pd
 from datetime import datetime
 
 def get_czifiles(source):
-  #Fetches the czi filenames in the source folder
+  #Fetches the czi or tiff filenames in the source folder
     data_strct = pd.read_csv("channel_name.csv")
     file_name = []
     name_header = data_strct.columns[0]
     for i in range(data_strct.shape[0]):
-      try:
-        filepath = glob.glob(os.path.join(source,data_strct[name_header][i])+'.czi', recursive=True)[0]
-        file_name.append(os.path.split(filepath)[-1])
-      except IndexError:
-        raise IndexError('Filename in CSV ---',data_strct[name_header][i],'--- does not match that of the file in folder',source) from None
+        try:
+            filepath_czi = glob.glob(os.path.join(source, data_strct[name_header][i]) + '.czi', recursive=True)
+            filepath_tif = glob.glob(os.path.join(source, data_strct[name_header][i]) + '.tif', recursive=True)
+            if filepath_czi:
+                file_name.append(os.path.split(filepath_czi[0])[-1])
+            elif filepath_tif:
+                file_name.append(os.path.split(filepath_tif[0])[-1])
+            else:
+                raise IndexError('Filename in CSV ---', data_strct[name_header][i], '--- does not match that of the file in folder', source)
+        except IndexError:
+          raise IndexError('Filename in CSV ---',data_strct[name_header][i],'--- does not match that of the file in folder',source) from None
 
     return file_name
 
@@ -55,7 +61,7 @@ def write(args, file, image):
       file = f'{os.path.basename(args.destination)}/{name}'
 
       with tifffile.TiffWriter(file  + '.ome.tif', bigtiff = True) as tif:
-        tif.save(image)
+        tif.write(image)
 
       with open(f'{os.path.basename(args.destination)}/{name_txt}' + '.txt', 'a') as f:
         #Save dimension C X Y for processing when we want to register
@@ -157,7 +163,12 @@ def run(args):
       gc.collect()
 
     if args.background != 'False':
-      file = args.background+'.czi'
+      # Background file can be either .czi or .tif/.tiff
+      candidates = [args.background + ext for ext in ('.czi', '.tif', '.tiff')]
+      found = [c for c in candidates if os.path.isfile(os.path.join(source, c))]
+      if not found:
+        raise FileNotFoundError(f'Background file "{args.background}" (.czi/.tif/.tiff) not found in {source}')
+      file = found[0]
       image = get_image(source, file)
       print('Saving image and image dimension')
       write(args, file, image)

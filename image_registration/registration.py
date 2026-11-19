@@ -147,7 +147,7 @@ def get_metadata(filename, img_shape, mrk_nm, resolution):
   mdata = mdata + '''<Image ID="Image:0" Name="'''+filename+'''">'''
   mdata = mdata + '''<Pixels ID="Pixels:0" DimensionOrder="XYCZT" PhysicalSizeX="'''+str(resolution)+'''" PhysicalSizeY="'''+str(resolution)+'''" Type="uint16" SizeX="'''+str(img_shape[2])+'''" SizeY="'''+str(img_shape[1])+'''" SizeC="'''+str(img_shape[0])+'''" SizeZ="1" SizeT="1">'''
   for i in range(len(mrk_nm)):
-    mdata = mdata + '''<Channel ID="Channel:0:'''+str(i)+'''" Name="'''+mrk_nm[i]+'''" SamplesPerPixel="1"><LightPath/></Channel>'''
+    mdata = mdata + '''<Channel ID="Channel:0:'''+str(i)+'''" Name="'''+mrk_nm[i].strip()+'''" SamplesPerPixel="1"><LightPath/></Channel>'''
   mdata = mdata + '''</Pixels></Image></OME>'''
 
   return mdata

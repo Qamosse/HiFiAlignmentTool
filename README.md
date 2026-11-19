@@ -1,238 +1,286 @@
-# Microscopy Image Registration
+# HiFi Align — whole-slide multiplex registration (fork of HiFiAlignmentTool)
 
-Code to register czi microscopy images or OME.TIF with **python 3**.
-This code is optimised at a memory level to be able to reassemble and register (translation + rotation) high resolution images in **ome.tif**. This code can also save the final image in a compressed tiled pyramidal OME-TIF format.
+This repository is a fork of [jhausserlab/HiFiAlignmentTool](https://github.com/jhausserlab/HiFiAlignmentTool).
+It adds **HiFi Align**, a desktop application and a rewritten registration engine for aligning the rounds of
+multiplex fluorescence imaging (one CZI or OME-TIFF file per round) on **whole slides of more than
+100,000 × 20,000 pixels**, which the original scripts cannot load in memory.
 
-Currently, for images of dimension 16'000 x 21'000 pixels the computer uses a maximum of 52GB to run all the code.
-I recommend these dimensions (give or take ~1000 pixels) if you are using a 64GB RAM computer. If you are working with bigger images, you will likely need to have a computer with more RAM.
-The images do not need to have the same dimension X,Y as the code will pad all images with the maximum X,Y dimensions of the image set. If you have created a set of images with empty channels for background subtraction, the code can do the background subtraction for you.
+The original command-line scripts (`main.py`, `image_registration/`) are still here, with a few bug fixes
+(see [Changes to the original scripts](#changes-to-the-original-scripts)). Their documentation is in
+[README_original.md](README_original.md).
 
-**Keywords**: Image Registration, Image alignment, CZI, OME.TIF, High Resolution Imagery, Python, HIFI
+A detailed user guide (in French) is in [GUIDE_HiFiAlign.md](GUIDE_HiFiAlign.md).
 
-## Getting started
+---
 
-Download the folder from Github.
+## Contents
 
-From the **terminal**, access that folder using **cd** to arrive to that folder path, as it will be used as the working directory.
+- [What is new](#what-is-new)
+- [Installation](#installation)
+- [Launching](#launching)
+- [Workflow](#workflow)
+- [Output files](#output-files)
+- [How the registration works](#how-the-registration-works)
+- [Performance](#performance)
+- [Command line](#command-line)
+- [Project files](#project-files)
+- [Code layout](#code-layout)
+- [Changes to the original scripts](#changes-to-the-original-scripts)
+- [Known limitations](#known-limitations)
+- [Credits](#credits)
 
-If you have root access, to install the required librairies for the code, you can run in the terminal from that folder:
+---
+
+## What is new
+
+| | Original scripts | HiFi Align |
+|---|---|---|
+| Interface | command line + `channel_name.csv` | desktop application (PySide6), plus a command line for batch runs |
+| Memory | whole images in RAM (~52 GB for 16,000 × 21,000 px) | **out-of-core**: only the regions being processed are read; never the whole slide |
+| Image size | limited by RAM | tested on slides of ~94,000 × 24,000 px per round, 6 rounds |
+| Output | one image for the whole slide | **one image per tissue section** (detected automatically, editable), or the whole slide |
+| Registration | rigid (pystackreg) at a single scale | coarse → rigid → **non-rigid** (local tissue deformation), robust to the fading of DAPI between rounds |
+| Markers | assigned by **channel position** in the CSV | assigned by **channel name** read from the file metadata |
+| Speed | single process | multiple processes for registration and warping, multithreaded compressed writing |
+| Output format | OME-TIFF, optional pyramid | tiled, compressed (lossless), pyramidal OME-TIFF with marker names and pixel size in the metadata |
+| Quality control | none | before/after overlays, correlation, deformation and warnings for every section × round, saved as PNG + CSV |
+| Reuse | — | saved projects, markers table import/export, batch processing of several slides |
+| Languages / themes | — | French or English; light, dark or system theme |
+
+---
+
+## Installation
+
+Python 3.10 in a conda environment is recommended (that is what was tested):
 
 ```bash
-python3 -m pip install -r requirements.txt
+conda create -n multiplex python=3.10
+conda activate multiplex
+python -m pip install -r requirements.txt
 ```
 
-else if you do not have root access (e.g from a server or multi-account computer), you can run:
+Main dependencies: `aicspylibczi` (CZI reading), `tifffile` + `zarr` 2.x + `imagecodecs` (TIFF reading and
+writing), `opencv-python-headless`, `scikit-image`, `scipy`, `pystackreg`, `PySide6` (interface).
+
+---
+
+## Launching
+
+From the repository folder:
 
 ```bash
-python3 -m pip install --user -r requirements.txt
+python -m hifialign                       # open the interface
+python -m hifialign gui my_slide.hifi.json # open a saved project
 ```
 
-This installs all the libraries that you require for the process (via pip, which is built-in by default with python3).
+On macOS, `Lancer HiFiAlign.command` can be double-clicked in the Finder (the first time: right-click → Open).
+It points to `/opt/miniconda3/envs/multiplex/bin/python`; edit that line if your Python is elsewhere.
 
-**Important**: If you need to output CZI files insted of OME-TIFF, you will also need to install the `pylibCZIrw` library.
-This library is not (yet) on [the Python package index (PyPI)](https://pypi.org/) and you will therefore have to install it manually as follows:
+---
+
+## Workflow
+
+The application is organised in five steps (left sidebar, shortcuts ⌘1–⌘5), plus a batch page.
+
+1. **Images**: add one file per round (button, or drag and drop files or a folder). Channels, image size and
+   pixel size are read from the metadata. The round marked ★ is the reference; the order of the list is the
+   order of the channels in the final image. Optional background image (with a multiplier), subtracted channel by
+   channel (same channel name) after registration.
+2. **Markers**: a rounds × channels table using the real channel names of the files. Type the marker of each
+   channel; an empty cell means the channel is not exported. The final channel list is previewed on the right.
+   The table can be exported to CSV and re-imported for another slide acquired the same way: rounds are matched by
+   name, and by row order when the names differ (for example file names with other dates); the matching is shown
+   for checking. The legacy `channel_name.csv` can also be imported.
+3. **Sections**: the tissue sections are detected on the reference channel of the reference round. Each section
+   produces its own final image and is registered independently. Rectangles can be moved, drawn, renamed or
+   disabled; "Whole slide" produces a single image.
+4. **Options**: output folder and base name (`<name>_S01.ome.tif`, …), pyramid, compression, output resolution,
+   QC and markers-table export, registration mode (precise / fast), rotation, non-rigid correction and its grid
+   spacing, maximum displacement between rounds, number of processes, temporary folder.
+5. **Run & QC**: "Register only" computes the registration and the QC so they can be checked before writing the
+   images; "Generate images" then reuses that registration. The QC table shows, for each section × round, the
+   shift, rotation, correlation before/after, rigid patches, maximum local deformation and warnings (rows to be
+   checked are highlighted). Clicking a row shows the before/after overlay (magenta = reference, green = round).
+   When a project that was already registered is reopened, the saved QC is loaded again.
+
+**Batch**: a queue of project files processed one after the other. "Create projects from folders" clones the
+current project (markers, options) for other slides: one folder per slide, files assigned to rounds in
+alphabetical order, sections detected again.
+
+The theme (light / dark / same as the system) and the language (French / English) are chosen at the bottom of the
+sidebar or in the View menu. Everything is translated, including the log and the QC warnings.
+
+---
+
+## Output files
+
+| File | Content |
+|---|---|
+| `<name>_S01.ome.tif`, … | Final image per section: tiled (512 px), pyramidal, lossless-compressed (zlib by default) OME-TIFF, BigTIFF, with marker names and pixel size in the OME metadata. |
+| `<name>_S01_channels.txt` | Channel names in order. |
+| `<name>_QC/` | Before/after overlays (`<section>_<round>.png`) and `registration_qc.csv`. |
+| `<name>_QC/<name>_markers.csv` | Markers table, re-importable for another slide (optional, on by default). |
+| `<name>_project.hifi.json` | Copy of the project including the computed transforms (traceability). |
+
+---
+
+## How the registration works
+
+All coordinates are in the full-resolution pixel space of the reference round. For each section and each round,
+the transform from reference to round is
+
+    M(x) = A · (x − D(x))
+
+where `A` is a rigid (rotation + translation) matrix and `D` a smooth displacement field sampled on a regular grid
+and bilinearly interpolated.
+
+**Region reads.** CZI files are read with `aicspylibczi.read_mosaic` on the region of interest only, at the
+required scale (OME-TIFF files are read through `tifffile` + `zarr`, using their pyramid levels when present).
+Each section is read once per round; the
+reference data are prepared once per section and shared between worker processes through a memory-mapped file on a
+local disk.
+
+**Modality-robust features.** In practice DAPI changes appearance from one round to the next (sharp nuclei in the
+first rounds, then mostly autofluorescence). Two representations are compared and, at each step, the more reliable
+one is kept:
+
+- *structure*: nuclei removed by a grey-level morphological opening (~8 µm), log transform, band-pass
+  (difference of Gaussians, 3–40 µm), robust normalisation (median / MAD). What remains are vessels, holes, cracks,
+  tissue borders and grey/white matter contrast.
+- *raw*: nuclei kept (band-pass from 1 µm), best when both rounds have sharp DAPI.
+
+**Steps.**
+
+1. **Coarse localisation** at low resolution (1/16 by default): normalised cross-correlation template matching
+   (`cv2.matchTemplate`) inside a search window (500 µm by default). The representation with the most distinctive
+   peak is used. An optional rotation estimate (`pystackreg`, rigid body) is accepted only if it improves the
+   correlation, which avoids being trapped by the tile-shading grid that is identical in every round.
+2. **Rigid refinement**: sub-pixel phase correlation (`skimage.registration.phase_cross_correlation`) on up to 25
+   tissue patches, then a robust rigid fit (RANSAC, `EuclideanTransform`).
+3. **Non-rigid correction** (optional, on by default): local shifts measured on a grid (400 µm spacing), outliers
+   rejected with an adaptive tolerance, missing nodes filled from their neighbours, field smoothed.
+   *Precise* mode: measurements at 1/2 resolution, 2 iterations. *Fast* mode: 1/4 resolution, 1 iteration, grid
+   twice as coarse.
+
+**Warping and writing.** Each output channel is warped in horizontal strips by worker processes (`cv2.remap` on
+blocks ≤ 8192 px, the mapping being computed on a sub-grid and interpolated) into a memory-mapped file in the
+temporary folder (2 bytes × channels × pixels of the section). The pyramidal OME-TIFF is then written by `tifffile`
+with multithreaded compression, first as `.part` then renamed, so an interrupted run never leaves a truncated image.
+
+**Rounds missing from a section.** If a round was not scanned over a section (common when the scan areas differ
+between rounds), its channels are left at 0 in that section's image and a warning is shown; the channel list stays
+the same for all sections.
+
+**Channel names.** `DAPI` also matches `DAPI_2`, `DAPI-1`, etc. (suffixes added by the acquisition software).
+
+---
+
+## Performance
+
+Measured on an Apple M4 Pro (14 cores, 48 GB RAM), slide of 6 rounds × 4 channels, ~94,000 × 24,000 px per round
+(CZI files of 1–2 GB, JPEG-XR compressed), 2 tissue sections, precise mode with non-rigid correction:
+
+- **about 5 min 20 s in total** (registration + warping + writing of the two final images) with the CZI files read
+  from a network share over a wired connection;
+- reading the CZI files over the network is the bottleneck: on a slower connection the same run took ~23 min;
+- memory use is bounded by design: registration jobs are scheduled according to a RAM budget (60 % of the
+  physical memory by default), and warping works on strips.
+
+Accuracy:
+
+- synthetic slides with a known transform: maximum error ≤ 0.4 px (≤ 0.13 µm) in precise mode, ~1–1.5 µm in
+  fast mode;
+- real slide, checked with independent local measurements: median residual 0.3–1.6 µm depending on the round,
+  including rounds with faded DAPI and torn or deformed tissue (local deformations of up to ~40 µm corrected).
+
+Tips: put the temporary folder on a fast local disk (not a network share or a synced cloud folder); the output
+folder can be on a network share.
+
+---
+
+## Command line
+
+Saved projects can be processed without the interface, for example on a server:
 
 ```bash
-python3 -m pip install pylibCZIrw-*.whl
+python -m hifialign run slide1.hifi.json slide2.hifi.json
+python -m hifialign run slide1.hifi.json --register-only   # registration + QC only
+python -m hifialign run slide1.hifi.json --write-only      # reuse the saved registration
+python -m hifialign run slide1.hifi.json --lang en          # log language (fr or en)
 ```
 
-From the folder where you are launching the code, you will have:
-- a folder **czi**, where the czi files that you want to process will be stored (which will be the "source").
-- an EMPTY folder called **reassembled** (where reassembled images and image dimension will be save, it will be the "destination").
-- an EMPTY folder called **aligned** (where registered images will be saved).
-- **channel_name.csv** with the experimental layout of the images (a matrix with files x channels and in the cross section the respective marker).
-- **image_registration** folder with the python scripts.
-- **main.py** the main script to run all the code.
-- **installLib.py** the script to install all librairies required for the code if you have root access.
-- **installLibUser.py** the script to install all librairies required for the code if you do not have root access.
+The computed transforms are saved back into the project file.
 
-**Please** respect the CSV file structure with: the name of the CSV called channel_name.csv, the filenames as the rows and the channels as the columns.
-The structure given in the mock dataset is the correct one.
-**Please be sure that the order of the channels in the CSV file is the same as in the image** (e.g. in CZI channel1 is Cy3, channel2 Cy5 and channel3 Cy7 -> so in CSV file you have the first column as Cy3, second column as Cy5 and third column as Cy7). In the case you have a czi file for the background subtraction, it should **not** be included in the CSV file.
+---
 
-**WARNING:** Do not put the special character **|** in any of the names in the CSV files (whether marker names, filenames or channel names). This **will** cause errors in the processing of the images if you want the fullname in the metadata.
+## Project files
 
-Here is how your folder should look like where you run the code:
-<p align="center">
-  <img src="structure.png"  width="500" height="300">
-</p>
+A project (`*.hifi.json`) stores everything needed to reproduce a run: image paths and round names, channel →
+marker table, reference round and channel, background, sections, all options, and the computed transforms with a
+signature of the settings they depend on (if the images, sections or registration options change, the transforms
+are marked as outdated and recomputed).
 
-If you have downloaded the folder from Github, you should have the same structure as the image above (with the addition of a couple of files that can be removed).
+---
 
-**You can remove the following files as they are not needed for the code**:
-
-- **README.md**
-- **structure.png**
-- ./aligned/**empty.txt**
-
-To run main.py you need to run at least the 2 arguments "source" and "destination" (with the example of the structure in the image, which is what you downloaded):
-```
-python3 main.py ./czi ./reassembled
-```
-main.py has also optional arguments:
-1. -y, --yes --> runs the code without asking questions before reassembling, registration and final_image creation.
-2. --reference CHAN --> in the place of CHAN put the channel you want to align with (DAPI by default).
-3. --resolution XX --> in the place of XX the resolution of input images in um/pixel which will be added in the metadata (0.325 um by default).
-4. --disable-reassemble --> if you want to skip the reassembling.
-5. --disable-registration --> if you want to skip the image registeration.
-6. --downscale --> if you want to reduce the resolution of your image (default is 0.33) if your image is too large for processing.
-7. --factor 0.XX --> the downscale factor you want between 0 and 1 ( the argument --downscale is required else it is full resolution that is done). CAREFUL: if you put 0.20 for example that means that the image will be 20% of the full resolution thus for a 1000x1000 pixel image you will have a 200x200 pixel output image.
-8. --nofinalimage --> if you do not want to save the final image (containing all the channels without the reference channel except for the one used as reference for registration).
-9. --background filename --> if you have a czi file that contains the channels with no markers except for the reference channel used for registration. You can put it in the czi folder and the code will remove the background for each respective channel (except for reference channel) in the final image output. If no argument provided, it will not do any background subtraction.
-10. --backgroundMult XX --> if you want to remove the background multiplied by a certain factor XX (1 by default).
-11. --fullname --> if you want the full name of the channels (e.g marker | channel | filename). By default it gives just the marker name.
-12. --pyramidal --> if you want to save a new final image that is compressed and pyramidal.
-
-
-if you want to know what are the arguments via the terminal, type:
-```
-python3 main.py --help
-```
-
-## What does the code do
-
-**REASSEMBLING**
-1. Load the czi file paths
-2. Take one czi file and reassemble the image
-3. Save the dimensions of the image in a txt file called "images_shape.txt" in the "destination" folder
-4. Save the reassembled image in ome.tif in the "destination" folder
-5. Restart from step 2 for the next czi file
-6. This is also done with the background czi file if the argument is provided
-
-**IMAGE REGISTRATION**
-
-0. If no reassembling done, load each image and save the dimensions in a txt file
-1. Load the first image in the csv list which will be used as the reference
-2. Extract reference channel which is used for alignment using the CSV file
-3. Delete other channels
-4. Load the next image i and extract reference channel used to align (delete other channels)
-5. Pad images if needed
-6. Rescale if asked in command line
-7. Do image registration on chan_ref and chan_i using pystackreg library
-8. Transform the other channels of image i with the known transformation
-9. Save the registered images in ome.tif into the folder aligned. They are saved with metadata for the channel names and scale of the image (changes the scale accordingly if downsized)
-10. Restart from step 4. with the next image
-11. Save a txt file with the marker names in the right order with the new images based on the CSV file (MARKER_CHANNEL_FILE)
-12. Image registration is also done with the background czi file if the argument is provided
-
-**FINAL IMAGE**
-1. Loads the first image into an array
-2. Loads the next image and removes reference channel
-3. If asked, does a background subtraction with respect to the background file that you provided.
-4. Repeat step 2-3 until the end
-5. Final image is saved in ome.tif in the main folder where you run the code. It is saved with metadata for the channel names and scale of the image
-6. Save a txt file with the marker names in the right order for the final image based on the CSV file (MARKER_CHANNEL_FILE)
-7. If  --pyramidal was called, the code will load fina_image.ome.tif and create a new compressed tiled pyramidal image.
-
-It is important to note that the loading of the file paths are done in the order given in the CSV file. The CSV file must be correct for proper running of the code!
-
-## Test code
-
-When downloading the github folder, you have a mock image set with its respective csv file. For demonstration purposes the markers are named a letter in alphabetical order with respect to the reference channel.
-To ensure the code is running and to also try the different options, you can work with this small image set.
-First of all, run the following code
-```
-python3 main.py ./czi ./reassembled --reference DAPI --resolution 0.325
-```
-This will reassemble, register and save the final image (in the metadata, it will have the resolution of 0.325um/pixel) and ask you to confirm for every step. Once this works, you can skip the ask for approval option by adding -y like so:
-```
-python3 main.py ./czi ./reassembled --reference DAPI --resolution 0.325 -y
-```
-If the images are too large for your computer to process and you would like to downscale the image (e.g 80% of the full resolution) you can do the following:
-```
-python3 main.py ./czi ./reassembled --reference DAPI --resolution 0.325 -y --downscale --factor 0.8
-```
-If you provided a background czi file (in our case the background is a copy of test1.czi) you can add the following argument to add background subtraction on your final image:
-```
-python3 main.py ./czi ./reassembled --reference DAPI --resolution 0.325 -y --background background
-```
-The resulting image will give you 4 channels that are empty as we are subtracting the channels of test1 with itself.
-
-If you want to increase the background subtraction and you have already done the reassembling and registration, you can skip those steps and just construct the new final image with the following code:
-```
-python3 main.py ./czi ./reassembled --reference DAPI --resolution 0.325 -y --background background --backgroundMult 2 --disable-reassemble --disable-registration
-```
-
-Finally, if you want to have a compressed tiled pyramidal OME-TIF you can add the argument --pyramidal.
-```
-python3 main.py ./czi ./reassembled --reference DAPI --resolution 0.325 -y --pyramidal
-```
-This can also be done after having done the whole process by disabling the previous steps and only doing the pyramidal step (you need to have the final image created as it creates the compressed pyramidal image in function of the final_image).
-```
-python3 main.py ./czi ./reassembled --reference DAPI --resolution 0.325 -y --disable-reassemble --disable-registration --nofinalimage --pyramidal
-```
-WARNING: If you want to try the pyramidal function with the test set you need to go into the script registration.py and modify line 582 tileSize = 512 to tileSize = 32. This is because the test image is too small for 512 pixels tilesize.
-
-N.B: The small set of image is taken from a region where the reassembling from czi was poorly done, thus there are slight shifts in the image.
-This is just to help you run the code and understand how the code works.
-
-## F.A.Q:
-
-**Does your code work on all systems?**
-
-Yes, this code runs on Mac, Windows and Linux systems.
-
-**The code crashes during the step in the terminal:**
-```
-Getting Transform matrix
-```
-**What does this mean?**
-
-This means that your computer does not have enough RAM for the image sizes you want to register. You can: crop the image to reduce the size, use the --downscale argument in the code to reduce the resolution of your image, use a computer with more RAM.
-
-**I am getting an error:**
-```
-'CziFile' object has no attribute 'dims_shape'
-```
-**What does this mean?**
-
-You likely have an older version of the library aicspylibczi (latest version is 3.0.1). Previous version used the function dims_shape(). You have to uninstall and reinstall the library or you can also change in the script czi.py in line12 the function from get_dims_shape to dims_shape (I recommend using the first solution).
-
-**I am getting an error:**
-```
-'TiffWriter' object has no attribute 'write'
-```
-**What does this mean?**
-
-You have an older version of the library tifffile (latest version is 2021.4.8). Previous version used the function tif.save to save tiffs but it has been deprecated and now tif.write is the function to use. Be sure to install the latest version of tifffile. Or else you can replace the parts of the code where there is tif.write by tif.save. WARNING: Do not do this for the function pyramidal_final_image as it is only in the latest version that you can do a pyramidal compressed tiff.
-
-**Can I use Qupath to analyse further the final image?**
-
-Yes, this image can be used in Qupath. However, if you are working with a very large image, you will need a tiled pyramidal image for QuPath to open. This can be done using the argument --pyramidal to save the image in that format. Or you can also open the final_image.ome.tif in ZEN and save that image in CZI format. QuPath can handle both.
-
-**I am trying to do pyramidal from the test set and I am getting an error**
-
-If you want to try the pyramidal function with the test set you need to go into the script registration.py and modify line 582 **tileSize = 512** to **tileSize = 32**. This is because the test image is too small for 512 pixels tilesize.
-
-**Can I have more details on the pyramidal argument?**
-
-What it does is:
-- loads the final_image.ome.tif 
-- creates 4 levels of resolution (100% 50% 25% 12.5%)
-- tiles it with size 512 pixels 
-- compresses the file by using the lossless zlib compression 
-- save it as pyr_final_image.ome.tif.
-
-For my use case, I used a tumor image: 13'500 x 14'000 x 49 channels of original size 18.7 GB.
-This file I cannot load directly into QuPath so it is a good use case to see if --pyramidal works.
-The created compressed tiled pyramidal image was 15 GB compared to 27GB if I had done uncompressed tiled pyramidal.
-This process is quite lengthy though on a 64 GB computer. It took 28 minutes to do the whole step for the original 18.7 GB image so if you are working with larger images, do not be surprised.
-The RAM used during this whole process was around 27GB and as the registration process required more RAM than that, I would say: if you can do the registration, you can also create the compressed file with the same computer/server. 
-
-**Can I do another type of image registration?**
-
-The image registration is done thanks to pystackreg library. In this code, RIGID_BODY (translation + rotation) is hard coded as it is the most consistent. However you can do simple translation, scaling or scaling + shear.
-If you want to change the registration process you need to access the script **registration.py** and modify in **line 250** and **line 363**: **sr = StackReg(StackReg.RIGID_BODY)** replace RIGID_BODY with: TRANSLATION, SCALED_ROTATION or AFFINE.
-See https://pystackreg.readthedocs.io/en/latest/ for more information on the registration process.
-
-**When running installLib.py or installLibUser.py, I am getting the following error**
+## Code layout
 
 ```
-Collecting aicspylibczi
-Could not find a version that satisfies the requirement aicspylibczi (from versions: )
-No matching distribution found for aicspylibczi
+hifialign/
+  __main__.py      entry point: GUI or command line (run / --register-only / --write-only / --lang)
+  project.py       project model (rounds, channels, sections, options), JSON save/load, CSV import/export
+  sources.py       region readers for CZI (aicspylibczi) and OME-TIFF (tifffile + zarr), metadata
+  sections.py      automatic detection of tissue sections on a low-resolution overview
+  registration.py  features, coarse / rigid / non-rigid registration, QC overlays
+  transform.py     rigid + displacement-field transform, block-wise warping
+  pipeline.py      validation, parallel registration, warping, pyramidal OME-TIFF writing, QC export
+  naming.py        tolerant channel-name matching (DAPI ↔ DAPI_2)
+  i18n.py          translation function; i18n_en.py: English strings
+  gui/
+    app.py         main window, sidebar, menus, theme and language switching
+    tabs.py        Images, Markers and Options pages
+    sections_tab.py Sections page (overview with editable rectangles)
+    run_tab.py     Run & QC page, Batch page
+    theme.py       light / dark palettes and stylesheet
+    widgets.py     image viewer and small widgets
+GUIDE_HiFiAlign.md       user guide (French)
+Lancer HiFiAlign.command macOS launcher
+main.py, image_registration/  original scripts (see README_original.md)
 ```
-**How can I solve this?**
 
-This is due to a version problem of your linux system or python. The easiest way to solve this is to have a miniconda environment or you can manually install it. For more details about this problem, please look at this ticket that I opened for the same issue:
-https://github.com/AllenCellModeling/aicspylibczi/issues/82
+---
+
+## Changes to the original scripts
+
+The original pipeline (`main.py`) was fixed so that it runs with current library versions:
+
+- `image_registration/czi.py`: the CZI path was joined twice when opening the file.
+- `image_registration/image_processing.py`: `TiffWriter.save` (removed from recent `tifffile`) replaced by
+  `TiffWriter.write`; the background file is looked up as `.czi`, then `.tif` / `.tiff`, with a clear error if
+  none exists.
+- `image_registration/registration.py`: channel names are stripped of trailing whitespace / newline characters
+  before being written to the OME metadata.
+
+Note for users of the original scripts: CZI files do not necessarily store channels in the order assumed by the
+example `channel_name.csv` (the test files store Cy7, Cy5, Cy3, EGFP, DAPI). The original scripts assign markers
+**by position**, so a CSV written in another order silently mislabels channels. HiFi Align assigns markers **by
+channel name**.
+
+---
+
+## Known limitations
+
+- Developed and tested on macOS (Apple Silicon) with Python 3.10; Windows and Linux have not been tested.
+- Fast mode is less accurate (~1–2 µm); use precise mode for single-cell analyses.
+- The non-rigid correction needs tissue structure; on very uniform or very small sections some grid points may
+  remain unreliable (reported in the QC).
+- The test images shipped in `czi/` are too small for the patch-based refinement; they are only useful to check
+  that the pipeline runs end to end.
+
+---
+
+## Credits
+
+- Original tool: [HiFiAlignmentTool](https://github.com/jhausserlab/HiFiAlignmentTool) (jhausserlab). See the
+  upstream repository for its licence.
+- HiFi Align (interface, out-of-core engine, non-rigid registration, translations and the changes listed above)
+  was developed in this fork with the assistance of Claude Code (Anthropic).

@@ -37,10 +37,25 @@ def get_reassembled_czi(czi):
 
   return np.array(data)
 
+
+
 def get_image(source, file):
-  #Takes file as argument and returns the reassembled images of the file
-  print('--- Processing:', source + '/' + file)
-  czi = aicspylibczi.CziFile(pathlib.Path(source + '/' + file ))
-  reassembled_czi = get_reassembled_czi(czi)
-  print('Shape of reassembled_czi: ', np.shape(reassembled_czi), 'of size', getsizeof(np.array(reassembled_czi))/10**6, 'MB')
-  return reassembled_czi
+    # Takes file as argument and returns the reassembled images of the file
+    print('--- Processing:', source + '/' + file)
+    file_path = os.path.join(source, file)
+
+    if file.endswith('.czi'):
+        # Existing code to read CZI files
+        czi = aicspylibczi.CziFile(pathlib.Path(file_path))
+        reassembled_czi = get_reassembled_czi(czi)
+        print('Shape of reassembled_czi: ', np.shape(reassembled_czi), 'of size', getsizeof(np.array(reassembled_czi))/10**6, 'MB')
+        return reassembled_czi
+    
+    elif file.endswith('.tif') or file.endswith('.tiff'):
+        # New code to read TIFF files
+        tif = tifffile.imread(file_path)
+        print('Shape of reassembled TIFF images: ', np.shape(tif), 'of size', getsizeof(np.array(tif))/10**6, 'MB')
+        return tif
+      
+    else:
+      raise ValueError("Unsupported file format")
