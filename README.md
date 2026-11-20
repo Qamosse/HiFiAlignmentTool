@@ -51,7 +51,7 @@ A detailed user guide (in French) is in [GUIDE_HiFiAlign.md](GUIDE_HiFiAlign.md)
 
 ## Installation
 
-Python 3.10 in a conda environment is recommended (that is what was tested):
+Python 3.10 in a conda environment is recommended:
 
 ```bash
 conda create -n multiplex python=3.10
@@ -73,8 +73,8 @@ python -m hifialign                       # open the interface
 python -m hifialign gui my_slide.hifi.json # open a saved project
 ```
 
-On macOS, `Lancer HiFiAlign.command` can be double-clicked in the Finder (the first time: right-click → Open).
-It points to `/opt/miniconda3/envs/multiplex/bin/python`; edit that line if your Python is elsewhere.
+On macOS, `Launch HiFiAlign.command` can be double-clicked in the Finder (the first time: right-click → Open).
+It points to `/opt/miniconda3/envs/multiplex/bin/python`; **edit that line if your Python is elsewhere.**
 
 ---
 
@@ -269,7 +269,7 @@ channel name**.
 
 ## Known limitations
 
-- Developed and tested on macOS (Apple Silicon) with Python 3.10; Windows and Linux have not been tested.
+- Developed and tested on macOS (Apple Silicon) with Python 3.10; Windows and Linux have not yet been tested.
 - Fast mode is less accurate (~1–2 µm); use precise mode for single-cell analyses.
 - The non-rigid correction needs tissue structure; on very uniform or very small sections some grid points may
   remain unreliable (reported in the QC).
